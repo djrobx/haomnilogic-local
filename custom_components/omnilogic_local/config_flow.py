@@ -1,4 +1,5 @@
 """Config flow for OmniLogic Local integration."""
+
 from __future__ import annotations
 
 import logging
@@ -8,13 +9,7 @@ from pyomnilogic_local.api import OmniLogicAPI
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.const import (
-    CONF_IP_ADDRESS,
-    CONF_NAME,
-    CONF_PORT,
-    CONF_SCAN_INTERVAL,
-    CONF_TIMEOUT,
-)
+from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, CONF_PORT, CONF_SCAN_INTERVAL, CONF_TIMEOUT
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
@@ -55,22 +50,17 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-        self.data = dict(config_entry.data)
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            self.data.update(user_input)
+            user_input.update({"name": self.config_entry.data[CONF_NAME]})
             # write updated config entries
-            self.hass.config_entries.async_update_entry(self.config_entry, data=self.data)
+            self.hass.config_entries.async_update_entry(self.config_entry, data=user_input)
             # # reload updated config entries
             await self.hass.config_entries.async_reload(self.config_entry.entry_id)
             self.async_abort(reason="configuration updated")
 
-            return self.async_create_entry(data=self.data)
+            return self.async_create_entry(data=user_input)
 
         return self.async_show_form(
             step_id="init",
@@ -136,7 +126,7 @@ class OmnilogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ig
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Create the options flow."""
-        return OptionsFlowHandler(config_entry)
+        return OptionsFlowHandler()
 
 
 class CannotConnect(HomeAssistantError):

@@ -4,7 +4,7 @@ import logging
 from math import floor
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from pyomnilogic_local.types import (
+from pyomnilogic_local.omnitypes import (
     BodyOfWaterType,
     ChlorinatorDispenserType,
     ChlorinatorOperatingMode,
@@ -21,13 +21,7 @@ from homeassistant.const import PERCENTAGE, UnitOfTemperature
 
 from .const import DOMAIN, KEY_COORDINATOR
 from .entity import OmniLogicEntity
-from .types.entity_index import (
-    EntityIndexBodyOfWater,
-    EntityIndexChlorinator,
-    EntityIndexFilter,
-    EntityIndexHeater,
-    EntityIndexPump,
-)
+from .types.entity_index import EntityIndexBodyOfWater, EntityIndexChlorinator, EntityIndexFilter, EntityIndexHeater, EntityIndexPump
 from .utils import get_entities_of_hass_type, get_entities_of_omni_types
 
 if TYPE_CHECKING:
@@ -98,6 +92,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                             "Chlorinator ORP control is not supported yet, "
                             "please raise an issue: https://github.com/cryptk/haomnilogic-local/issues"
                         )
+            case ChlorinatorDispenserType.LIQUID:
+                # Working in issue #116 on this support
+                pass
             case _:
                 _LOGGER.warning(
                     "Your system has an unsupported chlorinator, please raise an issue: https://github.com/cryptk/haomnilogic-local/issues"
@@ -283,5 +280,14 @@ class OmniLogicChlorinatorTimedPercentNumberEntity(OmniLogicEntity[EntityIndexCh
             case BodyOfWaterType.SPA:
                 bow_type = 1
 
-        await self.coordinator.omni_api.async_set_chlorinator_params(self.bow_id, self.system_id, int(value), bow_type=bow_type)
+        await self.coordinator.omni_api.async_set_chlorinator_params(
+            pool_id=self.bow_id,
+            equipment_id=self.system_id,
+            timed_percent=int(value),
+            cell_type=int(self.data.msp_config.cell_type),
+            op_mode=self.data.telemetry.operating_mode,
+            sc_timeout=self.data.msp_config.superchlor_timeout,
+            orp_timeout=self.data.msp_config.orp_timeout,
+            bow_type=bow_type,
+        )
         self.set_telemetry({"timed_percent": int(value)})

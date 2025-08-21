@@ -1,4 +1,5 @@
 """Example integration using DataUpdateCoordinator."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -21,17 +22,18 @@ SIMULATION = False
 if SIMULATION:
     import json
 
-    from .test_diagnostic_data import TEST_DIAGNOSTIC_DATA
+    # This line is only used during development when simulating a pool with diagnostic data
+    # Disable the pylint and mypy alerts that don't like it when this variable isn't defined
+    from .test_diagnostic_data import TEST_DIAGNOSTIC_DATA  # type: ignore # pylint: disable=no-name-in-module
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def device_walk(base: OmniBase) -> Iterable[OmniBase]:
     for _key, value in base:
-        if isinstance(value, OmniBase):
-            if hasattr(value, "system_id"):
-                yield value.without_subdevices()
-                yield from device_walk(value)
+        if isinstance(value, OmniBase) and hasattr(value, "system_id"):
+            yield value.without_subdevices()
+            yield from device_walk(value)
         if isinstance(value, list):
             for device in [d for d in value if hasattr(d, "system_id")]:
                 yield device.without_subdevices()
@@ -73,8 +75,10 @@ class OmniLogicCoordinator(DataUpdateCoordinator):
                 if SIMULATION:
                     _LOGGER.debug("Simulating Omni MSPConfig and Telemetry")
                     test_data = json.loads(TEST_DIAGNOSTIC_DATA.replace(r"\"", r"'"))
-                    self.msp_config = MSPConfig.load_xml(test_data["data"]["msp_config"])
-                    self.telemetry = Telemetry.load_xml(test_data["data"]["telemetry"])
+                    self.msp_config_xml = test_data["data"]["msp_config"]
+                    self.msp_config = MSPConfig.load_xml(self.msp_config_xml)
+                    self.telemetry_xml = test_data["data"]["telemetry"]
+                    self.telemetry = Telemetry.load_xml(self.telemetry_xml)
 
                 else:
                     # Initially we only pulled the msp_config at integration startup as it rarely changes

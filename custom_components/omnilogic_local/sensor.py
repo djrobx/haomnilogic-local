@@ -5,26 +5,10 @@ from decimal import Decimal
 import logging
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
-from pyomnilogic_local.types import (
-    ChlorinatorDispenserType,
-    CSADType,
-    FilterState,
-    HeaterType,
-    OmniType,
-    SensorType,
-    SensorUnits,
-)
+from pyomnilogic_local.omnitypes import ChlorinatorDispenserType, CSADType, FilterState, HeaterType, OmniType, SensorType, SensorUnits
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
-from homeassistant.const import (
-    CONCENTRATION_PARTS_PER_MILLION,
-    UnitOfPower,
-    UnitOfTemperature,
-)
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import CONCENTRATION_PARTS_PER_MILLION, UnitOfPower, UnitOfTemperature
 from homeassistant.helpers.typing import StateType
 
 from .const import BACKYARD_SYSTEM_ID, DOMAIN, KEY_COORDINATOR
@@ -104,9 +88,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 # As far as I can tell, "external input" sensors are not exposed in the telemetry,
                 # they are only used for things like equipment interlocks
                 pass
+            case CSADType.ACID | CSADType.CO2:
+                _LOGGER.debug(
+                    "Configuring sensor for CSAD ACID with ID: %s, Name: %s",
+                    sensor.msp_config.system_id,
+                    sensor.msp_config.name,
+                )
+                entities.append(OmniLogicCSADAcidPhEntity(coordinator=coordinator, context=system_id))
+                entities.append(OmniLogicCSADAcidORPEntity(coordinator=coordinator, context=system_id))
             case _:
                 _LOGGER.warning(
-                    "Your system has an unsupported sensor, please raise an issue: https://github.com/cryptk/haomnilogic-local/issues"
+                    "Your system has an unsupported sensor. ID: %s, Name: %s, Type: %s. Please raise an issue: https://github.com/cryptk/haomnilogic-local/issues",
+                    sensor.msp_config.system_id,
+                    sensor.msp_config.name,
+                    sensor.msp_config.type,
                 )
 
     # Create energy sensors for filters/pumps suitable for inclusion in the energy dashboard
@@ -136,24 +131,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 entities.append(
                     OmniLogicChlorinatorSaltLevelSensorEntity(coordinator=coordinator, context=system_id, sensor_type="instant")
                 )
+            case ChlorinatorDispenserType.LIQUID:
+                # It looks like there are no liquid sensors exposed in the telemetry
+                pass
             case _:
                 _LOGGER.warning(
                     "Your system has an unsupported chlorinator, please raise an issue: https://github.com/cryptk/haomnilogic-local/issues"
-                )
-
-    all_csads = get_entities_of_omni_types(coordinator.data, [OmniType.CSAD])
-    for system_id, csad in all_csads.items():
-        match cast(EntityIndexCSAD, csad).msp_config.type:
-            case CSADType.ACID:
-                _LOGGER.debug(
-                    "Configuring sensor for CSAD ACID with ID: %s, Name: %s",
-                    csad.msp_config.system_id,
-                    csad.msp_config.name,
-                )
-                entities.append(OmniLogicCSADAcidEntity(coordinator=coordinator, context=system_id))
-            case _:
-                _LOGGER.warning(
-                    "Your system has an unsupported CSAD unit, please raise an issue: https://github.com/cryptk/haomnilogic-local/issues"
                 )
 
     async_add_entities(entities)
@@ -288,7 +271,7 @@ class OmniLogicChlorinatorSaltLevelSensorEntity(OmniLogicEntity[EntityIndexChlor
         return f"{self.data.msp_config.name} {self._sensor_type.capitalize()} Salt Level"
 
 
-class OmniLogicCSADAcidEntity(OmniLogicEntity[EntityIndexCSAD], SensorEntity):
+class OmniLogicCSADAcidPhEntity(OmniLogicEntity[EntityIndexCSAD], SensorEntity):
     _attr_device_class = SensorDeviceClass.PH
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -309,4 +292,27 @@ class OmniLogicCSADAcidEntity(OmniLogicEntity[EntityIndexCSAD], SensorEntity):
             "calibration_value": self.data.msp_config.calibration_value,
             "ph_low_alarm_value": self.data.msp_config.ph_low_alarm_value,
             "ph_high_alarm_value": self.data.msp_config.ph_high_alarm_value,
+        }
+
+
+class OmniLogicCSADAcidORPEntity(OmniLogicEntity[EntityIndexCSAD], SensorEntity):
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_name = "ORP"
+
+    def __init__(self, coordinator: OmniLogicCoordinator, context: int) -> None:
+        super().__init__(coordinator, context)
+
+    @property
+    def native_value(self) -> StateType | date | datetime | Decimal:
+        return self.data.telemetry.orp
+
+    @property
+    def extra_state_attributes(self) -> dict[str, int | str]:
+        return super().extra_state_attributes | {
+            "target_level": self.data.msp_config.orp_target_level,
+            "runtime_level": self.data.msp_config.orp_runtime_level,
+            "low_alarm_level": self.data.msp_config.orp_low_alarm_level,
+            "high_alarm_level": self.data.msp_config.orp_high_alarm_level,
+            "forced_on_time": self.data.msp_config.orp_forced_on_time,
+            "forced_enabled": self.data.msp_config.orp_forced_enabled,
         }

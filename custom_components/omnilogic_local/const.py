@@ -1,9 +1,8 @@
 """Constants for the OmniLogic Local integration."""
+
 from typing import Final
 
-from pyomnilogic_local.types import OmniType
-
-# from homeassistant.backports.enum import StrEnum
+from pyomnilogic_local.omnitypes import OmniType
 
 DOMAIN: Final[str] = "omnilogic_local"
 KEY_COORDINATOR: Final[str] = "coordinator"
