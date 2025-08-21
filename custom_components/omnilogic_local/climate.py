@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pyomnilogic_local.models.telemetry import TelemetryBoW
-from pyomnilogic_local.types import OmniType
+from pyomnilogic_local.omnitypes import OmniType
 
 from homeassistant.components.climate import (
     ClimateEntity,
