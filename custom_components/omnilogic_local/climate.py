@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal, cast
-
-from pyomnilogic_local.models.telemetry import TelemetryBoW
-from pyomnilogic_local.omnitypes import OmniType
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.climate import (
     ClimateEntity,
@@ -12,12 +9,11 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
-from homeassistant.const import ATTR_TEMPERATURE, STATE_OFF, STATE_ON, UnitOfTemperature
+from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from pyomnilogic_local import Heater
 
 from .const import DOMAIN, KEY_COORDINATOR
 from .entity import OmniLogicEntity
-from .types.entity_index import EntityIndexHeater, EntityIndexHeaterEquip
-from .utils import get_entities_of_hass_type
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -30,132 +26,105 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    """Set up the water heater platform."""
+    """Set up the climate platform."""
+    coordinator: OmniLogicCoordinator = hass.data[DOMAIN][entry.entry_id][KEY_COORDINATOR]
+    entities: list[ClimateEntity] = []
 
-    coordinator = hass.data[DOMAIN][entry.entry_id][KEY_COORDINATOR]
-
-    all_heaters = get_entities_of_hass_type(coordinator.data, "climate")
-
-    virtual_heater = {system_id: data for system_id, data in all_heaters.items() if data.msp_config.omni_type == OmniType.VIRT_HEATER}
-    heater_equipment_ids = [system_id for system_id, data in all_heaters.items() if data.msp_config.omni_type == OmniType.HEATER_EQUIP]
-
-    entities = []
-    for system_id, vheater in virtual_heater.items():
-        _LOGGER.debug(
-            "Configuring climate heater with ID: %s, Name: %s",
-            vheater.msp_config.system_id,
-            vheater.msp_config.name,
-        )
-        entities.append(
-            OmniLogicClimateEntity(
-                coordinator=coordinator,
-                context=system_id,
-                heater_equipment_ids=heater_equipment_ids,
-            )
-        )
+    for _, _, heater in coordinator.omni.all_heaters.items():
+        entities.append(OmniLogicClimateEntity(coordinator=coordinator, equipment=heater))
 
     async_add_entities(entities)
 
 
-class OmniLogicClimateEntity(OmniLogicEntity[EntityIndexHeater], ClimateEntity):
-    """An entity using CoordinatorEntity.
-
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
-
-    """
+class OmniLogicClimateEntity(OmniLogicEntity[Heater], ClimateEntity):
+    """Climate entity for heater control."""
 
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
     _attr_name = "Heater"
 
-    def __init__(self, coordinator: OmniLogicCoordinator, context: int, heater_equipment_ids: list[int]) -> None:
-        """Pass coordinator to CoordinatorEntity."""
-        super().__init__(
-            coordinator,
-            context=context,
-        )
-        self.heater_equipment_ids = heater_equipment_ids
-
     @property
     def temperature_unit(self) -> str:
-        return str(UnitOfTemperature.CELSIUS) if self.get_system_config().units == "Metric" else str(UnitOfTemperature.FAHRENHEIT)
+        # Heaters always return their values in Fahrenheit, no matter what units the system is set to
+        # https://github.com/cryptk/haomnilogic-local/issues/96
+        return UnitOfTemperature.FAHRENHEIT
 
     @property
     def min_temp(self) -> float:
-        return self.data.msp_config.min_temp
+        return self.equipment.min_temp
 
     @property
     def max_temp(self) -> float:
-        return self.data.msp_config.max_temp
+        return self.equipment.max_temp
 
     @property
     def target_temperature(self) -> float | None:
-        return self.data.telemetry.current_set_point
+        return self.equipment.current_set_point
 
     @property
     def current_temperature(self) -> float | None:
-        current_temp = cast(TelemetryBoW, self.get_telemetry_by_systemid(self.bow_id)).water_temp
+        if self.equipment.bow_id is None:
+            return None
+        bow = self.coordinator.omni.all_bows.get(self.equipment.bow_id)
+        if bow is None:
+            return None
+        current_temp = bow.water_temp
         return current_temp if current_temp != -1 else None
 
     @property
-    def hvac_mode(self) -> HVACMode | None:
-        """Return current operation."""
-        return HVACMode.HEAT if self.data.telemetry.enabled else HVACMode.OFF
+    def hvac_mode(self) -> HVACMode:
+        """Return current HVAC mode."""
+        return HVACMode.HEAT if self.equipment.is_on else HVACMode.OFF
 
     @property
     def hvac_action(self) -> HVACAction:
-        """Return the current running hvac operation if supported.
-
-        Need to be one of CURRENT_HVAC_*.
-        """
-        if self.hvac_mode == HVACMode.HEAT:
-            return HVACAction.HEATING        
-        return HVACAction.OFF
-
-    @property
-    def current_operation(self) -> str:
-        return str(STATE_ON) if self.data.telemetry.enabled else str(STATE_OFF)
+        """Return the current running HVAC operation."""
+        if not self.equipment.is_on:
+            return HVACAction.OFF
+        if any(heater_equip.is_on for _, _, heater_equip in self.equipment.heater_equipment.items()):
+            return HVACAction.HEATING
+        return HVACAction.IDLE
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        await self.coordinator.omni_api.async_set_heater(
-            self.bow_id,
-            self.system_id,
-            int(kwargs[ATTR_TEMPERATURE]),
-            unit=self.temperature_unit,
-        )
-        self.set_telemetry({"current_set_point": int(kwargs[ATTR_TEMPERATURE])})
+        """Set target temperature."""
+        await self.equipment.set_temperature(int(kwargs[ATTR_TEMPERATURE]))
+        self.coordinator.do_next_refresh_after()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set hvac mode."""
-        if hvac_mode == HVACMode.HEAT:
-            self._hvac_mode = HVACMode.HEAT
-            await self.coordinator.omni_api.async_set_heater_enable(self.bow_id, self.system_id, True)
-            self.set_telemetry({"enabled": "yes"})
-        elif hvac_mode == HVACMode.OFF:
-            self._hvac_mode = HVACMode.OFF
-            await self.coordinator.omni_api.async_set_heater_enable(self.bow_id, self.system_id, False)
-            self.set_telemetry({"enabled": "no"})
-        else:
-            _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
-            return
-        # Ensure we update the current operation after changing the mode
-        self.async_write_ha_state()
-              
+        """Set HVAC mode."""
+        match hvac_mode:
+            case HVACMode.HEAT:
+                await self.equipment.turn_on()
+            case HVACMode.OFF:
+                await self.equipment.turn_off()
+            case _:
+                _LOGGER.error("Unrecognized HVAC mode: %s", hvac_mode)
+                return
+        self.coordinator.do_next_refresh_after()
+
+    async def async_turn_on(self) -> None:
+        """Turn the heater on."""
+        await self.async_set_hvac_mode(HVACMode.HEAT)
+
+    async def async_turn_off(self) -> None:
+        """Turn the heater off."""
+        await self.async_set_hvac_mode(HVACMode.OFF)
+
     @property
-    def extra_state_attributes(self) -> dict[str, str | int]:
-        extra_state_attributes = super().extra_state_attributes | {"solar_set_point": self.data.msp_config.solar_set_point}
-        for system_id in self.heater_equipment_ids:
-            heater_equipment = cast(EntityIndexHeaterEquip, self.coordinator.data[system_id])
-            prefix = f"omni_heater_{heater_equipment.msp_config.name.lower()}"
-            extra_state_attributes = extra_state_attributes | {
-                f"{prefix}_enabled": heater_equipment.msp_config.enabled,
+    def _extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes."""
+        extra_state_attributes: dict[str, Any] = {
+            "omni_solar_set_point": self.equipment.solar_set_point,
+            "omni_why_on": self.equipment.why_on,
+        }
+        for _, system_id, heater_equip in self.equipment.heater_equipment.items():
+            name = heater_equip.name or "unknown"
+            prefix = f"omni_heater_equip_{name}_"
+            extra_state_attributes |= {
+                f"{prefix}_enabled": heater_equip.enabled,
                 f"{prefix}_system_id": system_id,
-                f"{prefix}_bow_id": heater_equipment.msp_config.bow_id,
-                f"{prefix}_state": heater_equipment.telemetry.state.pretty(),
-                f"{prefix}_sensor_temp": heater_equipment.telemetry.temp,
+                f"{prefix}_bow_id": heater_equip.bow_id,
+                f"{prefix}_state": str(heater_equip.state),
+                f"{prefix}_current_temp": heater_equip.current_temp,
             }
         return extra_state_attributes

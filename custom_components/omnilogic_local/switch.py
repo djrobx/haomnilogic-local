@@ -1,34 +1,21 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, TypeVar, cast
-
-from pyomnilogic_local.models.telemetry import TelemetryFilter
-from pyomnilogic_local.omnitypes import (
-    BodyOfWaterType,
-    FilterState,
-    FilterValvePosition,
-    OmniType,
-    PumpState,
-    RelayFunction,
-    RelayState,
-    RelayType,
-    ValveActuatorState,
-)
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.helpers.device_registry import DeviceInfo
+from pyomnilogic_local import Bow, Chlorinator, Filter, Group, Pump, Relay, Schedule
+from pyomnilogic_local.omnitypes import (
+    BodyOfWaterType,
+    FilterValvePosition,
+    RelayFunction,
+    RelayType,
+)
 
 from .const import DOMAIN, KEY_COORDINATOR
 from .entity import OmniLogicEntity
-from .types.entity_index import (
-    EntityIndexBodyOfWater,
-    EntityIndexChlorinator,
-    EntityIndexFilter,
-    EntityIndexPump,
-    EntityIndexRelay,
-    EntityIndexValveActuator,
-)
-from .utils import get_entities_of_hass_type, get_entities_of_omni_types
+from .typing import OmniLogicEquipment
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -43,287 +30,170 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up the switch platform."""
+    coordinator: OmniLogicCoordinator = hass.data[DOMAIN][entry.entry_id][KEY_COORDINATOR]
+    entities: list[SwitchEntity] = []
 
-    entities = []
-    coordinator = hass.data[DOMAIN][entry.entry_id][KEY_COORDINATOR]
-    all_switches = get_entities_of_hass_type(coordinator.data, "switch")
+    # Add relay switches (excluding valve actuators)
+    for _, _, relay in coordinator.omni.all_relays.items():
+        # Skip valve actuators - they belong in valve platform
+        if relay.relay_type == RelayType.VALVE_ACTUATOR:
+            continue
+        entities.append(OmniLogicRelaySwitchEntity(coordinator=coordinator, equipment=relay))
 
-    for system_id, switch in all_switches.items():
-        match switch.msp_config.omni_type:
-            case OmniType.RELAY:
-                _LOGGER.debug(
-                    "Configuring switch for relay with ID: %s, Name: %s",
-                    switch.msp_config.system_id,
-                    switch.msp_config.name,
-                )
-                match switch.msp_config.type:
-                    case RelayType.VALVE_ACTUATOR:
-                        entities.append(OmniLogicRelayValveActuatorSwitchEntity(coordinator=coordinator, context=system_id))
-                    case RelayType.HIGH_VOLTAGE:
-                        entities.append(OmniLogicRelayHighVoltageSwitchEntity(coordinator=coordinator, context=system_id))
-            case OmniType.FILTER:
-                _LOGGER.debug(
-                    "Configuring switch for filter with ID: %s, Name: %s",
-                    switch.msp_config.system_id,
-                    switch.msp_config.name,
-                )
-                entities.append(OmniLogicFilterSwitchEntity(coordinator=coordinator, context=system_id))
-            case OmniType.PUMP:
-                _LOGGER.debug(
-                    "Configuring switch for pump with ID: %s, Name: %s",
-                    switch.msp_config.system_id,
-                    switch.msp_config.name,
-                )
-                entities.append(OmniLogicPumpSwitchEntity(coordinator=coordinator, context=system_id))
-            case OmniType.CHLORINATOR:
-                _LOGGER.debug(
-                    "Configuring switch for chlorinator with ID: %s, Name: %s",
-                    switch.msp_config.system_id,
-                    switch.msp_config.name,
-                )
-                entities.append(OmniLogicChlorinatorSwitchEntity(coordinator=coordinator, context=system_id))
+    # Add pump switches
+    for _, _, pump in coordinator.omni.all_pumps.items():
+        entities.append(OmniLogicPumpSwitchEntity(coordinator=coordinator, equipment=pump))
 
-    # Add switches for spillover into pools if supported
-    all_bows = get_entities_of_omni_types(coordinator.data, [OmniType.BOW])
-    for system_id, bow in all_bows.items():
-        match bow.msp_config.type:
-            case BodyOfWaterType.POOL:
-                if bow.msp_config.supports_spillover == "yes":
-                    _LOGGER.debug(
-                        "Configuring switch for spillover with ID: %s, Name: %s",
-                        bow.msp_config.system_id,
-                        bow.msp_config.name,
-                    )
-                    entities.append(OmniLogicSpilloverSwitchEntity(coordinator=coordinator, context=system_id))
+    # Add filter switches
+    for _, _, filter_equipment in coordinator.omni.all_filters.items():
+        entities.append(OmniLogicFilterSwitchEntity(coordinator=coordinator, equipment=filter_equipment))
+
+    # Add chlorinator switches
+    for _, _, chlorinator in coordinator.omni.all_chlorinators.items():
+        entities.append(OmniLogicChlorinatorSwitchEntity(coordinator=coordinator, equipment=chlorinator))
+
+    # Add spillover switches for pools that support it
+    for _, _, bow in coordinator.omni.all_bows.items():
+        if bow.equip_type == BodyOfWaterType.POOL and bow.supports_spillover:
+            entities.append(OmniLogicSpilloverSwitchEntity(coordinator=coordinator, equipment=bow))
+
+    # Add schedule switches
+    for _, _, schedule in coordinator.omni.schedules.items():
+        entities.append(OmniLogicScheduleSwitchEntity(coordinator=coordinator, equipment=schedule))
+
+    # Add group switches
+    for _, _, group in coordinator.omni.groups.items():
+        entities.append(OmniLogicGroupSwitchEntity(coordinator=coordinator, equipment=group))
 
     async_add_entities(entities)
 
 
-T = TypeVar("T", EntityIndexRelay, EntityIndexFilter, EntityIndexPump, EntityIndexValveActuator)
-
-
-class OmniLogicSwitchEntity(OmniLogicEntity[T], SwitchEntity):
-    """An entity using CoordinatorEntity.
-
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
-
-    """
-
-    telem_value_state: ValveActuatorState | RelayState | PumpState | FilterState
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the entity on."""
-        _LOGGER.debug("turning on switch ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_equipment(self.bow_id, self.system_id, True)
-        self.set_telemetry({"state": self.telem_value_state.ON})
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the entity off."""
-        _LOGGER.debug("turning off switch ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_equipment(self.bow_id, self.system_id, False)
-        self.set_telemetry({"state": self.telem_value_state.OFF})
+class OmniLogicSwitchEntity[T: OmniLogicEquipment](OmniLogicEntity[T], SwitchEntity):
+    """Base class for switch entities in the OmniLogic integration."""
 
     @property
     def is_on(self) -> bool | None:
-        return self.data.telemetry.state == self.telem_value_state.ON
+        if hasattr(self.equipment, "is_on"):
+            return self.equipment.is_on
+        msg = f"is_on not implemented for equipment type: {type(self.equipment)}"
+        raise NotImplementedError(msg)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the entity on."""
+        if hasattr(self.equipment, "turn_on"):
+            await self.equipment.turn_on()
+            self.coordinator.do_next_refresh_after()
+        else:
+            msg = f"turn_on not implemented for equipment type: {type(self.equipment)}"
+            raise NotImplementedError(msg)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the entity off."""
+        if hasattr(self.equipment, "turn_off"):
+            await self.equipment.turn_off()
+            self.coordinator.do_next_refresh_after()
+        else:
+            msg = f"turn_off not implemented for equipment type: {type(self.equipment)}"
+            raise NotImplementedError(msg)
 
 
-class OmniLogicRelayValveActuatorSwitchEntity(OmniLogicSwitchEntity[EntityIndexValveActuator]):
-    """An entity using CoordinatorEntity.
-
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
-
-    """
-
-    telem_value_state = ValveActuatorState
+class OmniLogicRelaySwitchEntity(OmniLogicSwitchEntity[Relay]):
+    """Switch entity for general relays (excluding valve actuators)."""
 
     @property
     def icon(self) -> str | None:
-        match self.data.msp_config.function:
-            case RelayFunction.WATERFALL:
-                return "mdi:waterfall"
-            case RelayFunction.FOUNTAIN:
-                return "mdi:fountain"
-            case RelayFunction.WATER_FEATURE:
-                return "mdi:fountain"
-            case RelayFunction.WATER_SLIDE:
-                return "mdi:slide"
-            case RelayFunction.LAMINARS:
-                return "mdi:light"
-            case RelayFunction.LIGHT:
-                return "mdi:light"
-            case RelayFunction.BACKYARD_LIGHT:
-                return "mdi:light"
+        """Return icon based on relay function."""
+        match self.equipment.function:
+            case RelayFunction.BACKYARD_LIGHT | RelayFunction.LAMINARS | RelayFunction.LIGHT | RelayFunction.POOL_LIGHT:
+                return "mdi:lightbulb" if self.is_on else "mdi:lightbulb-off"
             case _:
-                return "mdi:valve-open" if self.is_on else "mdi:valve-closed"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, int | str]:
-        return super().extra_state_attributes | {
-            "why_on": self.data.telemetry.why_on,
-        }
+                return "mdi:toggle-switch-variant" if self.is_on else "mdi:toggle-switch-variant-off"
 
 
-class OmniLogicRelayHighVoltageSwitchEntity(OmniLogicSwitchEntity[EntityIndexRelay]):
-    """An entity using CoordinatorEntity.
-
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
-
-    """
-
-    telem_value_state = RelayState
-
-    @property
-    def icon(self) -> str | None:
-        return "mdi:toggle-switch-variant" if self.is_on else "mdi:toggle-switch-variant-off"
-
-
-class OmniLogicPumpSwitchEntity(OmniLogicSwitchEntity[EntityIndexPump]):
-    """An entity using CoordinatorEntity.
-
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
-
-    """
-
-    telem_value_state = PumpState
+class OmniLogicPumpSwitchEntity(OmniLogicSwitchEntity[Pump]):
+    """Switch entity for pumps."""
 
     @property
     def icon(self) -> str | None:
         return "mdi:pump" if self.is_on else "mdi:pump-off"
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the entity on."""
-        _LOGGER.debug("turning on pump ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_equipment(self.bow_id, self.system_id, self.data.telemetry.last_speed)
-        self.set_telemetry({"state": PumpState.ON})
 
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the entity off."""
-        _LOGGER.debug("turning off pump ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_equipment(self.bow_id, self.system_id, False)
-        self.set_telemetry({"state": PumpState.OFF, "speed": 0})
-
-
-class OmniLogicFilterSwitchEntity(OmniLogicSwitchEntity[EntityIndexFilter]):
-    """An entity using CoordinatorEntity.
-
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
-
-    """
-
-    telem_value_state = FilterState
+class OmniLogicFilterSwitchEntity(OmniLogicSwitchEntity[Filter]):
+    """Switch entity for filters."""
 
     @property
     def icon(self) -> str | None:
         return "mdi:pump" if self.is_on else "mdi:pump-off"
 
     @property
-    def is_on(self) -> bool | None:
-        return self.data.telemetry.state in [
-            FilterState.ON,
-            FilterState.PRIMING,
-            FilterState.HEATER_EXTEND,
-            FilterState.CSAD_EXTEND,
-            FilterState.FILTER_FORCE_PRIMING,
-            FilterState.FILTER_SUPERCHLORINATE,
-        ]
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the entity on."""
-        _LOGGER.debug("turning on filter ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_equipment(self.bow_id, self.system_id, self.data.telemetry.last_speed)
-        self.set_telemetry({"state": FilterState.PRIMING})
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the entity off."""
-        _LOGGER.debug("turning off filter ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_equipment(self.bow_id, self.system_id, False)
-        self.set_telemetry({"state": FilterState.OFF, "speed": 0})
-
-    @property
-    def extra_state_attributes(self) -> dict[str, int | str]:
-        return super().extra_state_attributes | {
-            "filter_state": self.data.telemetry.state.pretty(),
-            "why_on": self.data.telemetry.why_on.pretty(),
+    def _extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "omni_filter_state": str(self.equipment.state),
+            "omni_why_on": str(self.equipment.why_on),
         }
 
 
-class OmniLogicChlorinatorSwitchEntity(OmniLogicEntity[EntityIndexChlorinator], SwitchEntity):
-    """An entity using CoordinatorEntity.
-
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
-
-    """
-
-    telem_value_state = RelayState
+class OmniLogicChlorinatorSwitchEntity(OmniLogicSwitchEntity[Chlorinator]):
+    """Switch entity for chlorinators."""
 
     @property
     def icon(self) -> str | None:
         return "mdi:toggle-switch-variant" if self.is_on else "mdi:toggle-switch-variant-off"
 
+
+class OmniLogicGroupSwitchEntity(OmniLogicSwitchEntity[Group]):
+    """Switch entity for groups."""
+
     @property
-    def is_on(self) -> bool | None:
-        return self.data.telemetry.enable is True
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the entity on."""
-        _LOGGER.debug("turning on chlorinator ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_chlorinator_enable(self.bow_id, True)
-        self.set_telemetry({"enable": True})
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the entity off."""
-        _LOGGER.debug("turning off chlorinator ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_chlorinator_enable(self.bow_id, False)
-        self.set_telemetry({"enable": False})
+    def device_info(self) -> DeviceInfo | None:
+        """Return the device info."""
+        device_info = super().device_info
+        _LOGGER.debug(device_info)
+        return device_info
 
 
-class OmniLogicSpilloverSwitchEntity(OmniLogicEntity[EntityIndexBodyOfWater], SwitchEntity):
-    """An entity using CoordinatorEntity.
+class OmniLogicScheduleSwitchEntity(OmniLogicSwitchEntity[Schedule]):
+    """Switch entity for general relays (excluding valve actuators)."""
 
-    The CoordinatorEntity class provides:
-      should_poll
-      async_update
-      async_added_to_hass
-      available
+    _controlled_equipment: OmniLogicEquipment
 
-    """
+    def __init__(self, coordinator: OmniLogicCoordinator, equipment: Schedule) -> None:
+        super().__init__(coordinator, equipment)
+        _controlled_equipment = coordinator.omni.get_equipment_by_id(equipment.equipment_id)
+        if _controlled_equipment is not None:
+            self._controlled_equipment = cast(OmniLogicEquipment, _controlled_equipment)
+        else:
+            raise ValueError(f"Could not find equipment with ID {equipment.equipment_id} for schedule {equipment.name}")
+
+    @property
+    def name(self) -> str:
+        days_active_str = "".join([day.title()[:2] for day in self.equipment.days_active])
+        return (
+            f"Schedule {self._controlled_equipment.name}"
+            f" {self.equipment.start_hour:02d}:{self.equipment.start_minute:02d}"
+            f" {self.equipment.end_hour:02d}:{self.equipment.end_minute:02d}"
+            f" {days_active_str}"
+        )
+
+    @property
+    def unique_id(self) -> str | None:
+        # Unique ID based on only bow_id and system_id as the name is generated based on the schedule
+        # parameters, which could be altered by the user. We don't want a user changing the start time
+        # of a schedule to result in a new entity being created
+        return f"{self.bow_id} {self.system_id} schedule"
+
+
+class OmniLogicSpilloverSwitchEntity(OmniLogicEntity[Bow], SwitchEntity):
+    """Switch entity for spillover control."""
 
     _attr_name = "Spillover"
 
-    def __init__(self, coordinator: OmniLogicCoordinator, context: int) -> None:
-        super().__init__(coordinator, context)
-        # This is all a little gross, and it means that we can only support one filter system per BoW, but I believe that is a limitation of
-        # the Omni system anyway.  They can have multiple pumps, but only one "filter"
-        all_filters = get_entities_of_omni_types(coordinator.data, [OmniType.FILTER])
-        bow_filter = {
-            system_id: bow_filter for (system_id, bow_filter) in all_filters.items() if bow_filter.msp_config.bow_id == self.bow_id
-        }
-        self.filter_system_id = list(bow_filter.keys())[0]
+    def __init__(self, coordinator: OmniLogicCoordinator, equipment: Bow) -> None:
+        super().__init__(coordinator, equipment)
+        # Get the filter for this body of water to check spillover state
+        # In the OmniLogic system, there is always exactly one filter per BoW
+        # The underlying library should be modified to not have filters be a list
+        _, _, self.filter = equipment.filters.items()[0]
 
     @property
     def icon(self) -> str | None:
@@ -331,14 +201,17 @@ class OmniLogicSpilloverSwitchEntity(OmniLogicEntity[EntityIndexBodyOfWater], Sw
 
     @property
     def is_on(self) -> bool | None:
-        return cast(TelemetryFilter, self.get_telemetry_by_systemid(self.filter_system_id)).valve_position == FilterValvePosition.SPILLOVER
+        """Check if spillover is currently active."""
+        return self.filter.valve_position == FilterValvePosition.SPILLOVER
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
         _LOGGER.debug("turning on spillover ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_spillover(self.bow_id, 75)
+        await self.equipment.turn_on_spillover()
+        self.coordinator.do_next_refresh_after()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
         _LOGGER.debug("turning off spillover ID: %s", self.system_id)
-        await self.coordinator.omni_api.async_set_spillover(self.bow_id, 0)
+        await self.equipment.turn_off_spillover()
+        self.coordinator.do_next_refresh_after()

@@ -1,0 +1,77 @@
+name: Bug Report
+description: Have you experienced a problem? Use this option to report it!
+title: "[BUG] - "
+labels: bug
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Please complete this form as completely as possible. The higher quality the bug report, the
+        better chances that it can be resolved in a timely fashion. Please attach [debug logs](https://www.home-assistant.io/docs/configuration/troubleshooting/#enabling-debug-logging)
+        and [diagnostic data](https://www.home-assistant.io/docs/configuration/troubleshooting/#download-diagnostics) if possible.
+
+
+        $${\color{red}IMPORTANT}$$: Please do not paste logs into the description or reproduction steps, GitHub will try to parse them and it will mangle the
+        logs making them far less useful. Please place logs either in the "Relevant Logs" text box below, or attach them as an upload at the
+        end of the form.
+  - type: checkboxes
+    id: have_searched
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search to see if an issue already exists for the bug you encountered.
+      options:
+        - label: I have searched the existing issues
+          required: true
+        - label: >
+            I have added [diagnostic data](https://www.home-assistant.io/docs/configuration/troubleshooting/#download-diagnostics)
+            file as an upload at the end of the form or. I understand that the ability to assist IS limited without it
+            (please upload diagnostics if at all possible).
+          required: true
+        - label: >
+            I have either added [debug logs](https://www.home-assistant.io/docs/configuration/troubleshooting/#enabling-debug-logging) or
+            to the section marked "Debug Logs" or attached the debug log file as an upload at the end of the form. I understand that the
+            ability to assist IS limited without it (add debug logs if at all possible).
+          required: true
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: Bug Description
+      description: Please describe the bug you encountered.
+      placeholder: "Example: Error logged about failing to parse Telemetry/MSP Config/etc."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: Reproduction Steps
+      description: If you are able to reproduce this bug, please provide a step-by-step description of how to reproduce the bug.
+      value: |-
+        1.
+        2.
+        3.
+        ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug Logs
+      description: >
+        Please only place logs either in this text box, or attach them as an upload at the end of the form.
+
+        DO NOT paste logs into the description or reproduction steps, GitHub will try to parse them and it will mangle the logs
+        making them far less useful.
+      render: text
+  - type: dropdown
+    id: connection_type
+    attributes:
+      label: How is your OmniLogic connected to the network?
+      options:
+        - Select One
+        - Ethernet
+        - Wi-Fi
+    validations:
+      required: true
+  - type: upload
+    id: attachments
+    attributes:
+      label: Attachments
+      description: Please attach any supporting files such as diagnostic data, debug logs, screenshots, etc.
