@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity, BinarySensorEntityDescription
 from homeassistant.const import EntityCategory
-from pyomnilogic_local import Backyard, Bow, Chlorinator, HeaterEquipment
-from pyomnilogic_local.omnitypes import ChlorinatorAlert, ChlorinatorError, ChlorinatorStatus
+from pyomnilogic_local import CSAD, Backyard, Bow, Chlorinator, HeaterEquipment
+from pyomnilogic_local.omnitypes import ChlorinatorAlert, ChlorinatorError, ChlorinatorStatus, CSADStatus
 
 from .const import DOMAIN, KEY_COORDINATOR
 from .coordinator import OmniLogicCoordinator
@@ -63,6 +63,14 @@ CHLORINATOR_BINARY_SENSORS: tuple[OmniLogicBinarySensorEntityDescription, ...] =
     ),
 )
 
+CSAD_BINARY_SENSORS: tuple[OmniLogicBinarySensorEntityDescription, ...] = (
+    OmniLogicBinarySensorEntityDescription(
+        key="dispensing",
+        name="Dispensing",
+        value_fn=lambda equipment: (equipment.status is CSADStatus.DISPENSING) if isinstance(equipment, CSAD) else None,
+    ),
+)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up the switch platform."""
@@ -100,6 +108,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 entity_description=description,
             )
             for description in CHLORINATOR_BINARY_SENSORS
+        )
+
+    # Create binary sensor entities for each CSAD based on the descriptions in CSAD_BINARY_SENSORS
+    for _, _, csad in coordinator.omni.all_csads.items():
+        entities.extend(
+            OmniLogicCsadBinarySensorEntity(
+                coordinator=coordinator,
+                equipment=csad,
+                entity_description=description,
+            )
+            for description in CSAD_BINARY_SENSORS
         )
 
     # Create binary sensor entities for each chlorinator status, alert, and error message
@@ -204,6 +223,31 @@ class OmniLogicChlorinatorBinarySensorEntity(OmniLogicEntity[Chlorinator], Binar
         self,
         coordinator: OmniLogicCoordinator,
         equipment: Chlorinator,
+        entity_description: OmniLogicBinarySensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator, equipment)
+        self.entity_description = entity_description
+        self._attr_name = f"{equipment.name} {str(entity_description.name)}" if hasattr(entity_description, "name") else None
+
+    @property
+    def _extra_state_attributes(self) -> dict[str, Any]:
+        return self.entity_description.extra_state_attributes_fn(self.equipment)
+
+    @property
+    def is_on(self) -> bool | None:
+        # Override the cached value with a dynamic value based on the entity description function
+        return self.entity_description.value_fn(self.equipment)
+
+
+class OmniLogicCsadBinarySensorEntity(OmniLogicEntity[CSAD], BinarySensorEntity):
+    """Binary sensor entity for CSAD status."""
+
+    entity_description: OmniLogicBinarySensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: OmniLogicCoordinator,
+        equipment: CSAD,
         entity_description: OmniLogicBinarySensorEntityDescription,
     ) -> None:
         super().__init__(coordinator, equipment)
