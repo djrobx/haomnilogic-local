@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import zlib
 from typing import TYPE_CHECKING
 
 from homeassistant.const import (
@@ -17,6 +18,8 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pyomnilogic_local import OmniLogic
+from pyomnilogic_local.api.message import OmniLogicMessage
+from pyomnilogic_local.api.protocol import OmniLogicProtocol
 from pyomnilogic_local.omnitypes import OmniType
 
 from .const import BACKYARD_SYSTEM_ID, DOMAIN, KEY_COORDINATOR, SUGGESTED_AREA
@@ -40,6 +43,40 @@ PLATFORMS: list[Platform] = [
 ]
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_ORIGINAL_REASSEMBLE_MULTIPART = OmniLogicProtocol._reassemble_multipart
+
+
+async def _reassemble_multipart_with_exact_boundary(
+    protocol: OmniLogicProtocol,
+    lead_message: OmniLogicMessage,
+) -> tuple[bytes, bool]:
+    """Use the controller's declared response size to remove only padding."""
+    lead = protocol._parse_lead_message(lead_message)
+    payload, compressed = await _ORIGINAL_REASSEMBLE_MULTIPART(protocol, lead_message)
+    return payload[: lead.msg_size], compressed
+
+
+def _decode_payload_without_trailing_null_strip(
+    protocol: OmniLogicProtocol,
+    data: bytes,
+    compressed: bool,
+) -> str:
+    """Decode compressed payloads without discarding valid zlib trailer bytes.
+
+    zlib ignores bytes after a complete stream, including packet padding. This
+    preserves a valid compressed trailer that happens to end in a null byte and
+    still raises an error for genuinely incomplete data. This is a temporary
+    compatibility patch until python-omnilogic-local includes the upstream fix.
+    """
+    if compressed:
+        data = zlib.decompress(data)
+    return data.decode("utf-8").strip("\x00")
+
+
+OmniLogicProtocol._reassemble_multipart = _reassemble_multipart_with_exact_boundary
+OmniLogicProtocol._decode_payload = _decode_payload_without_trailing_null_strip
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
