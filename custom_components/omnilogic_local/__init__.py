@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import zlib
 from typing import TYPE_CHECKING
 
 from homeassistant.const import (
@@ -17,6 +18,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pyomnilogic_local import OmniLogic
+from pyomnilogic_local.api.protocol import OmniLogicProtocol
 from pyomnilogic_local.omnitypes import OmniType
 
 from .const import BACKYARD_SYSTEM_ID, DOMAIN, KEY_COORDINATOR, SUGGESTED_AREA
@@ -40,6 +42,38 @@ PLATFORMS: list[Platform] = [
 ]
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_ORIGINAL_DECODE_PAYLOAD = OmniLogicProtocol._decode_payload
+
+
+def _decode_payload_with_streaming_fallback(
+    protocol: OmniLogicProtocol,
+    data: bytes,
+    compressed: bool,
+) -> str:
+    """Decode controller payloads that fail one-shot zlib decompression.
+
+    Some multi-block OmniLogic responses raise ``Error -5`` with
+    ``zlib.decompress`` despite being recoverable by a streaming decompressor.
+    Keep the library's normal path first and use the tested fallback only for
+    that failure mode. This can be removed once python-omnilogic-local ships
+    the upstream fix.
+    """
+    try:
+        return _ORIGINAL_DECODE_PAYLOAD(protocol, data, compressed)
+    except zlib.error as error:
+        if not compressed or "incomplete or truncated stream" not in str(error):
+            raise
+
+    decompressor = zlib.decompressobj()
+    payload = data.rstrip(b"\x00")
+    decoded = decompressor.decompress(payload) + decompressor.flush()
+    _LOGGER.warning("Recovered an OmniLogic compressed response with the streaming zlib workaround")
+    return decoded.decode("utf-8").strip("\x00")
+
+
+OmniLogicProtocol._decode_payload = _decode_payload_with_streaming_fallback
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
