@@ -26,7 +26,7 @@ class OmniLogicCoordinator(DataUpdateCoordinator[None]):
 
     failure_counts: dict[str, int] = {}
 
-    def __init__(self, hass: HomeAssistant, omni: OmniLogic) -> None:
+    def __init__(self, hass: HomeAssistant, omni: OmniLogic, temperature_offset: int = 0) -> None:
         """Initialize my coordinator."""
         super().__init__(
             hass,
@@ -37,6 +37,22 @@ class OmniLogicCoordinator(DataUpdateCoordinator[None]):
             update_interval=SCAN_INTERVAL,
         )
         self.omni = omni
+        self._temperature_offset = temperature_offset
+
+    @property
+    def temperature_offset(self) -> int:
+        """Return the configured display offset in degrees Fahrenheit."""
+        return self._temperature_offset
+
+    def display_temperature(self, temperature: float | None) -> float | None:
+        """Apply the configured offset to a controller-reported temperature."""
+        if temperature is None:
+            return None
+        return temperature + self.temperature_offset
+
+    def controller_temperature(self, temperature: float) -> int:
+        """Convert a displayed temperature back to the controller's scale."""
+        return round(temperature - self.temperature_offset)
 
     async def _async_update_data(self) -> None:
         """Update data via library."""

@@ -7,7 +7,8 @@
           "ip_address": "[%key:common::config_flow::data::ip_address%]",
           "host": "[%key:common::config_flow::data::host%]",
           "port": "[%key:common::config_flow::data::port%]",
-          "timeout": "[%key:common::config_flow::data::timeout%]"
+          "timeout": "[%key:common::config_flow::data::timeout%]",
+          "temperature_offset": "Temperature offset (°F)"
         }
       }
     },
@@ -28,7 +29,8 @@
           "ip_address": "[%key:common::options_flow::data::ip_address%]",
           "host": "[%key:common::config_flow::data::host%]",
           "port": "[%key:common::options_flow::data::port%]",
-          "timeout": "[%key:common::options_flow::data::timeout%]"
+          "timeout": "[%key:common::options_flow::data::timeout%]",
+          "temperature_offset": "Temperature offset (°F)"
         }
       }
     }

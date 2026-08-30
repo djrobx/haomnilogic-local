@@ -52,15 +52,15 @@ class OmniLogicWaterHeaterEntity(OmniLogicEntity[Heater], WaterHeaterEntity):
 
     @property
     def min_temp(self) -> float:
-        return self.equipment.min_temp
+        return self.equipment.min_temp + self.coordinator.temperature_offset
 
     @property
     def max_temp(self) -> float:
-        return self.equipment.max_temp
+        return self.equipment.max_temp + self.coordinator.temperature_offset
 
     @property
     def target_temperature(self) -> float | None:
-        return self.equipment.current_set_point
+        return self.coordinator.display_temperature(self.equipment.current_set_point)
 
     @property
     def current_temperature(self) -> float | None:
@@ -71,7 +71,9 @@ class OmniLogicWaterHeaterEntity(OmniLogicEntity[Heater], WaterHeaterEntity):
         if bow is None:
             return None
         current_temp = bow.water_temp
-        return current_temp if current_temp != -1 else None
+        if current_temp == -1:
+            return None
+        return self.coordinator.display_temperature(current_temp)
 
     @property
     def current_operation(self) -> str:
@@ -79,7 +81,7 @@ class OmniLogicWaterHeaterEntity(OmniLogicEntity[Heater], WaterHeaterEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature."""
-        await self.equipment.set_temperature(int(kwargs[ATTR_TEMPERATURE]))
+        await self.equipment.set_temperature(self.coordinator.controller_temperature(kwargs[ATTR_TEMPERATURE]))
         self.coordinator.do_next_refresh_after()
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:

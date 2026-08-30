@@ -13,7 +13,7 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from pyomnilogic_local import OmniLogic
 
-from .const import DOMAIN
+from .const import DOMAIN, TEMPERATURE_OFFSET
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
@@ -27,6 +27,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_NAME, default="Omnilogic"): cv.string,
         vol.Optional(CONF_PORT, default=10444): cv.port,
         vol.Optional(CONF_TIMEOUT, default=5.0): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=10.0)),
+        vol.Optional(TEMPERATURE_OFFSET, default=0): vol.All(vol.Coerce(int), vol.Range(min=-20, max=20)),
     }
 )
 
@@ -66,6 +67,9 @@ class OptionsFlowHandler(OptionsFlow):
                     vol.Required(CONF_PORT, default=self.config_entry.data[CONF_PORT]): cv.port,
                     vol.Required(CONF_TIMEOUT, default=self.config_entry.data[CONF_TIMEOUT]): vol.All(
                         vol.Coerce(float), vol.Range(min=0.5, max=10.0)
+                    ),
+                    vol.Required(TEMPERATURE_OFFSET, default=self.config_entry.data.get(TEMPERATURE_OFFSET, 0)): vol.All(
+                        vol.Coerce(int), vol.Range(min=-20, max=20)
                     ),
                 }
             ),

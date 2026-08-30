@@ -167,7 +167,9 @@ class OmniLogicWaterTemperatureSensorEntity(OmniLogicTemperatureSensorEntity[Bow
     @property
     def native_value(self) -> StateType | date | datetime | Decimal:
         temp = self.sensed_equipment.water_temp
-        return temp if temp not in [-1, 255, 65535] else None
+        if temp in [-1, 255, 65535]:
+            return None
+        return self.coordinator.display_temperature(temp)
 
 
 class OmniLogicSolarTemperatureSensorEntity(OmniLogicTemperatureSensorEntity[HeaterEquipment]):

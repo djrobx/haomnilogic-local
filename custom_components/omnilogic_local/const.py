@@ -7,6 +7,7 @@ from pyomnilogic_local.omnitypes import OmniType
 
 DOMAIN: Final[str] = "omnilogic_local"
 KEY_COORDINATOR: Final[str] = "coordinator"
+TEMPERATURE_OFFSET: Final[str] = "temperature_offset"
 
 SCAN_INTERVAL = timedelta(seconds=10)
 UPDATE_DELAY_SECONDS: Final[float] = 1.5

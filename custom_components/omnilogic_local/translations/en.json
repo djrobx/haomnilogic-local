@@ -15,7 +15,8 @@
                     "ip_address": "IP Address",
                     "host": "Hostname/IP Address",
                     "port": "Port",
-                    "timeout": "Timeout"
+                    "timeout": "Timeout",
+                    "temperature_offset": "Temperature offset (°F)"
                 }
             }
         }
@@ -27,7 +28,8 @@
                     "ip_address": "IP Address",
                     "host": "Hostname/IP Address",
                     "port": "Port",
-                    "timeout": "Timeout"
+                    "timeout": "Timeout",
+                    "temperature_offset": "Temperature offset (°F)"
                 }
             }
         }

@@ -22,7 +22,7 @@ from pyomnilogic_local.api.message import OmniLogicMessage
 from pyomnilogic_local.api.protocol import OmniLogicProtocol
 from pyomnilogic_local.omnitypes import OmniType
 
-from .const import BACKYARD_SYSTEM_ID, DOMAIN, KEY_COORDINATOR, SUGGESTED_AREA
+from .const import BACKYARD_SYSTEM_ID, DOMAIN, KEY_COORDINATOR, SUGGESTED_AREA, TEMPERATURE_OFFSET
 from .coordinator import OmniLogicCoordinator
 
 if TYPE_CHECKING:
@@ -91,7 +91,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady from error
 
     # Create our data coordinator
-    coordinator = OmniLogicCoordinator(hass=hass, omni=omni)
+    coordinator = OmniLogicCoordinator(
+        hass=hass,
+        omni=omni,
+        temperature_offset=int(entry.data.get(TEMPERATURE_OFFSET, 0)),
+    )
     await coordinator.async_config_entry_first_refresh()
 
     device_registry = dr.async_get(hass)
