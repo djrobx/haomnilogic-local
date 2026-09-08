@@ -188,13 +188,6 @@ class OmniLogicSpilloverSwitchEntity(OmniLogicEntity[Bow], SwitchEntity):
 
     _attr_name = "Spillover"
 
-    def __init__(self, coordinator: OmniLogicCoordinator, equipment: Bow) -> None:
-        super().__init__(coordinator, equipment)
-        # Get the filter for this body of water to check spillover state
-        # In the OmniLogic system, there is always exactly one filter per BoW
-        # The underlying library should be modified to not have filters be a list
-        _, _, self.filter = equipment.filters.items()[0]
-
     @property
     def icon(self) -> str | None:
         return "mdi:toggle-switch-variant" if self.is_on else "mdi:toggle-switch-variant-off"
@@ -202,7 +195,8 @@ class OmniLogicSpilloverSwitchEntity(OmniLogicEntity[Bow], SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Check if spillover is currently active."""
-        return self.filter.valve_position == FilterValvePosition.SPILLOVER
+        _, _, filter_equipment = self.equipment.filters.items()[0]
+        return filter_equipment.valve_position == FilterValvePosition.SPILLOVER
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
